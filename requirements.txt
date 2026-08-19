@@ -1,2 +1,6 @@
-Pillow>=9.0.0
+# Core requirement — image decoding, encoding and drawing.
+Pillow>=10.0.0
+
+# Optional: enables drag-and-drop onto the window.  The app runs fine without
+# it and falls back to the Open / Batch dialogs.
 tkinterdnd2>=0.3.2
