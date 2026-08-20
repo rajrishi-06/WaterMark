@@ -52,6 +52,21 @@ a live-preview interface.
   land on its own source is renamed.
 - Settings, colour choices and positions are no longer trapped behind a chain of
   modal pop-ups; the image stays on screen and every control updates it live.
+- **PNG palette quantization no longer fails on images with transparency.**
+  Pillow's median cut rejects an alpha channel, and every watermarked render
+  carries one, so the option raised `ValueError` on essentially every PNG the
+  app produced. Fully opaque images now drop the dead channel and keep median
+  cut (fast octree bands gradients badly); only real transparency falls back.
+- The failure callback for background work received a deleted name rather than
+  the exception, so a failed export crashed the dialog meant to report it.
+- The batch dialog cancelled its polling timer on close, instead of letting a
+  queued callback fire against a destroyed window.
+- The menubar is themed with the rest of the window rather than staying Tk's
+  default grey strip above a dark UI.
+- In the light theme, buttons and inputs now have a face distinct from the
+  panel behind them; previously both were white and controls were invisible.
+- PNG-only controls (compression effort, palette reduction) grey out when
+  another format is selected, instead of looking live while doing nothing.
 
 ### Changed
 

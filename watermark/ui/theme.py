@@ -51,7 +51,9 @@ LIGHT = Palette(
     name="light",
     bg="#eef0f3",
     panel="#ffffff",
-    field="#ffffff",
+    # Must differ from `panel`: buttons and inputs sit on white panels, and a
+    # white face on a white panel leaves them invisible.
+    field="#f1f3f7",
     border="#d3d7de",
     text="#16181d",
     muted="#5c6570",
@@ -97,9 +99,11 @@ def apply_theme(root: tk.Misc, name: str = "dark") -> Palette:
     style.configure("Status.TLabel", background=palette.panel, foreground=palette.muted)
     style.configure("Danger.TLabel", background=palette.panel, foreground=palette.danger)
 
+    # borderwidth=1 keeps `bordercolor` visible, so a button reads as a button
+    # even where its face is close to the surface behind it.
     style.configure("TButton", background=palette.field, foreground=palette.text,
                     bordercolor=palette.border, focusthickness=1, padding=(10, 5),
-                    relief="flat")
+                    relief="flat", borderwidth=1)
     style.map("TButton",
               background=[("active", palette.border), ("disabled", palette.panel)],
               foreground=[("disabled", palette.muted)])

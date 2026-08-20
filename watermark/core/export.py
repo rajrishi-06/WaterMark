@@ -148,6 +148,14 @@ def prepare_image(
     return image
 
 
+def _is_opaque(image: Image.Image) -> bool:
+    """True when an image's alpha channel carries no actual transparency."""
+    try:
+        return image.getchannel("A").getextrema() == (255, 255)
+    except (ValueError, KeyError):
+        return True
+
+
 def _save_kwargs(
     settings: ExportSettings,
     image_format: ImageFormat,
@@ -203,9 +211,21 @@ def _encode_prepared(
         colors = max(2, min(256, int(palette_colors)))
         # Quantizing a screenshot or logo to a palette routinely cuts a PNG by
         # 60-80% with no visible change; photographs will band, hence opt-in.
-        prepared = prepared.quantize(
-            colors=colors, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG
-        )
+        #
+        # Median cut picks a noticeably better palette -- gradients band badly
+        # under fast octree -- but it rejects an alpha channel outright, and
+        # every watermarked render carries one.  Most of those are fully
+        # opaque, so drop the dead channel and keep the better method; only
+        # genuinely transparent images fall back to fast octree.
+        #
+        # `dither` is deliberately not passed: Pillow ignores it unless a
+        # reference palette is supplied.
+        if has_alpha(prepared) and not _is_opaque(prepared):
+            prepared = prepared.quantize(colors=colors, method=Image.Quantize.FASTOCTREE)
+        else:
+            prepared = prepared.convert("RGB").quantize(
+                colors=colors, method=Image.Quantize.MEDIANCUT
+            )
 
     buffer = io.BytesIO()
     kwargs = _save_kwargs(settings, image_format, source, quality)

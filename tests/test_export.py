@@ -121,6 +121,53 @@ def test_png_palette_reduces_size():
     assert paletted.byte_count < full.byte_count
 
 
+def test_png_palette_works_on_images_with_alpha(watermarked):
+    """Regression: every watermarked render is RGBA.
+
+    Pillow's median cut rejects an alpha channel outright, so palette
+    quantization used to raise ValueError on essentially every PNG the app
+    produced -- while a test using a plain RGB image passed happily.
+    """
+    assert watermarked.mode == "RGBA"
+    settings = ExportSettings(image_format=ImageFormat.PNG)
+
+    full = export.encode(watermarked, settings)
+    paletted = export.encode(watermarked, settings, palette_colors=64)
+
+    assert paletted.byte_count < full.byte_count
+    decoded = Image.open(__import__("io").BytesIO(paletted.data))
+    assert decoded.mode == "P"
+    assert "transparency" in decoded.info or decoded.convert("RGBA").mode == "RGBA"
+
+
+def test_opaque_rgba_uses_the_higher_quality_quantizer(watermarked):
+    """Fast octree bands gradients badly; a dead alpha channel shouldn't cost that.
+
+    A watermarked photo is RGBA but almost always fully opaque, so the alpha is
+    dropped and median cut is used; only real transparency falls back.
+    """
+    assert watermarked.mode == "RGBA"
+    assert export._is_opaque(watermarked)
+
+    translucent = watermarked.copy()
+    alpha = translucent.getchannel("A").point(lambda value: 120)
+    translucent.putalpha(alpha)
+    assert not export._is_opaque(translucent)
+
+    settings = ExportSettings(image_format=ImageFormat.PNG)
+    for image in (watermarked, translucent):
+        result = export.encode(image, settings, palette_colors=64)
+        assert Image.open(__import__("io").BytesIO(result.data)).mode == "P"
+
+
+def test_png_palette_survives_the_target_size_search(watermarked):
+    """The lossless branch of the search reaches for palette reduction."""
+    settings = ExportSettings(image_format=ImageFormat.PNG)
+    baseline = export.encode(watermarked, settings).byte_count
+    result = export.compress_to_target(watermarked, settings, int(baseline * 0.5))
+    assert result.byte_count < baseline
+
+
 def test_metadata_is_stripped_by_default(tmp_path):
     path = tmp_path / "tagged.jpg"
     exif = Image.Exif()

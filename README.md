@@ -5,6 +5,8 @@ once. Everything runs locally; no image ever leaves your computer.
 
 ![The WaterMark window](docs/screenshot.png)
 
+*Every screen is captured in [docs/SCREENS.md](docs/SCREENS.md).*
+
 ---
 
 ## What it does

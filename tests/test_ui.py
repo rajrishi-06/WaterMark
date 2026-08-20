@@ -33,6 +33,15 @@ needs_display = pytest.mark.skipif(not _has_display(), reason="no display availa
 # --------------------------------------------------------------------------- #
 
 
+def test_light_palette_separates_surfaces_from_controls():
+    """A white button face on a white panel makes the button invisible."""
+    from watermark.ui.theme import DARK, LIGHT
+
+    for palette in (LIGHT, DARK):
+        assert palette.field != palette.panel, palette.name
+        assert palette.border != palette.panel, palette.name
+
+
 @pytest.mark.parametrize(
     "payload,expected",
     [
@@ -249,6 +258,123 @@ def test_export_controls_track_the_format(app, photo):
     app.settings.export.image_format = ImageFormat.JPEG
     app._update_export_state()
     assert str(app.quality_slider.scale.cget("state")) == "normal"
+
+
+@needs_display
+def test_png_only_controls_are_disabled_for_other_formats(app, photo):
+    """Palette quantization does nothing outside PNG, so it must not look live."""
+    app.load(photo)
+    pump(app, 0.4)
+
+    app.settings.export.image_format = ImageFormat.PNG
+    app._update_export_state()
+    assert str(app.palette_check.cget("state")) == "normal"
+    assert str(app.palette_spin.cget("state")) == "normal"
+
+    app.settings.export.image_format = ImageFormat.WEBP
+    app._update_export_state()
+    assert str(app.palette_check.cget("state")) == "disabled"
+    assert str(app.palette_spin.cget("state")) == "disabled"
+
+
+@needs_display
+def test_resize_controls_track_the_resize_mode(app, photo):
+    app.load(photo)
+    pump(app, 0.4)
+    app.settings.export.resize_mode = ResizeMode.PERCENT
+    app._update_export_state()
+    assert str(app.scale_slider.scale.cget("state")) == "normal"
+    assert str(app.max_dimension_slider.scale.cget("state")) == "disabled"
+
+
+@needs_display
+def test_menubar_is_themed(app):
+    """The menubar was Tk's default grey strip above a dark window."""
+    menubar = app.root.nametowidget(app.root.cget("menu"))
+    assert str(menubar.cget("background")) == app.palette.panel
+
+
+@needs_display
+def test_every_tab_builds_and_can_be_selected(app, photo):
+    app.load(photo)
+    pump(app, 0.4)
+    labels = [app.notebook.tab(i, "text") for i in range(app.notebook.index("end"))]
+    assert labels == ["Text", "Logo", "Pattern", "Adjust", "Export"]
+    for index in range(len(labels)):
+        app.notebook.select(index)
+        pump(app, 0.15)
+        assert app.notebook.index("current") == index
+
+
+@needs_display
+def test_rotate_buttons_swap_the_canvas_and_keep_the_watermark_upright(app, photo):
+    app.load(photo)
+    pump(app)
+    before = app.canvas.image_size
+    app._set_rotation(90)
+    pump(app)
+    after = app.canvas.image_size
+    assert after[0] < after[1] < before[0] + after[1]
+    assert (before[1], before[0]) == after
+    assert app.canvas.layer_box("text") is not None
+
+
+@needs_display
+def test_preferences_dialog_applies_and_persists(app):
+    from watermark.ui.dialogs import PreferencesDialog
+
+    called = []
+    dialog = PreferencesDialog(app.root, app.palette, app.config, lambda: called.append(True))
+    pump(app, 0.3)
+    dialog.preview_var.set(1500)
+    dialog.workers_var.set(7)
+    dialog._apply()
+    pump(app, 0.2)
+
+    assert called == [True]
+    assert app.config.preview_resolution == 1500
+    assert app.config.batch_workers == 7
+
+
+@needs_display
+def test_batch_dialog_runs_to_completion(app, photo_folder, tmp_path, monkeypatch):
+    from watermark.ui import dialogs
+
+    monkeypatch.setattr(dialogs.messagebox, "askyesno", lambda *a, **k: False)
+    folder, _ = photo_folder
+    output = tmp_path / "batch_out"
+
+    dialog = dialogs.BatchDialog(app.root, app.palette, app.settings.copy(), app.config,
+                                 [str(folder)])
+    pump(app, 0.3)
+    # Dropping a folder on the dialog picks up sub-folders too.
+    assert len(dialog.files) == 5
+
+    dialog.output_var.set(str(output))
+    dialog.pattern_var.set("{name}_{index}of{count}{ext}")
+    dialog._start()
+    for _ in range(200):
+        pump(app, 0.05)
+        if dialog.runner is None and dialog.progress_var.get() >= 100:
+            break
+
+    written = sorted(p.name for p in output.iterdir())
+    assert len(written) == 5
+    assert "shot0_1of5.jpg" in written
+    assert "processed" in dialog.status_var.get()
+    dialog.destroy()
+
+
+@needs_display
+def test_batch_dialog_stops_polling_once_closed(app, photo, capsys):
+    """A pending after-job used to fire against the destroyed dialog."""
+    from watermark.ui import dialogs
+
+    dialog = dialogs.BatchDialog(app.root, app.palette, app.settings.copy(), app.config, [photo])
+    pump(app, 0.3)
+    dialog.destroy()
+    pump(app, 0.5)
+    assert "invalid command name" not in capsys.readouterr().err
 
 
 @needs_display

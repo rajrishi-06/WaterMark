@@ -268,12 +268,15 @@ class WatermarkApp:
         self._bind_shortcuts()
 
     def _build_menu(self) -> None:
-        menubar = tk.Menu(self.root)
         colors = dict(
             background=self.palette.panel, foreground=self.palette.text,
             activebackground=self.palette.accent, activeforeground=self.palette.accent_text,
             borderwidth=0,
         )
+        # The menubar needs the colours too, or it stays Tk's default grey strip
+        # above a dark window.  macOS and Windows render the bar natively and
+        # ignore these, which is the correct behaviour there.
+        menubar = tk.Menu(self.root, **colors)
 
         file_menu = tk.Menu(menubar, tearoff=0, **colors)
         file_menu.add_command(label="Open image…", accelerator="Ctrl+O", command=self.open_image)
@@ -369,6 +372,8 @@ class WatermarkApp:
     def _build_panel(self, parent: ttk.Frame) -> None:
         notebook = ttk.Notebook(parent)
         notebook.pack(fill="both", expand=True)
+        #: Kept so tabs can be selected programmatically (shortcuts, tests).
+        self.notebook = notebook
 
         for title, builder in (
             ("Text", self._build_text_tab),
@@ -632,16 +637,19 @@ class WatermarkApp:
         palette_row.pack(fill="x", pady=(6, 0))
         self.palette_enabled = tk.BooleanVar(self.root, value=False)
         self.palette_value = tk.IntVar(self.root, value=128)
-        check = ttk.Checkbutton(
+        self.palette_check = ttk.Checkbutton(
             palette_row, text="Reduce PNG to a colour palette", variable=self.palette_enabled,
             command=self._apply_palette_setting,
         )
-        check.pack(side="left")
-        spin = ttk.Spinbox(palette_row, from_=2, to=256, increment=2, width=5,
-                           textvariable=self.palette_value, command=self._apply_palette_setting)
-        spin.pack(side="right")
-        spin.bind("<Return>", lambda _e: self._apply_palette_setting())
-        tooltip(check, "Great for screenshots, logos and flat graphics; photos may band.",
+        self.palette_check.pack(side="left")
+        self.palette_spin = ttk.Spinbox(
+            palette_row, from_=2, to=256, increment=2, width=5,
+            textvariable=self.palette_value, command=self._apply_palette_setting,
+        )
+        self.palette_spin.pack(side="right")
+        self.palette_spin.bind("<Return>", lambda _e: self._apply_palette_setting())
+        tooltip(self.palette_check,
+                "Great for screenshots, logos and flat graphics; photos may band.",
                 self.palette)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
@@ -752,7 +760,12 @@ class WatermarkApp:
         self._set_enabled(self.quality_slider, lossy)
         self._set_enabled(self.lossless_check,
                           image_format in (ImageFormat.WEBP, ImageFormat.AVIF))
-        self._set_enabled(self.png_level_slider, image_format is ImageFormat.PNG)
+        is_png = image_format is ImageFormat.PNG
+        self._set_enabled(self.png_level_slider, is_png)
+        # Palette quantization is a PNG-only trick; showing it live under WebP
+        # implied it was doing something.
+        self._set_enabled(self.palette_check, is_png)
+        self._set_enabled(self.palette_spin, is_png)
 
         mode = self.settings.export.resize_mode
         self._set_enabled(self.max_dimension_slider, mode is ResizeMode.FIT_WITHIN)
@@ -1130,7 +1143,8 @@ class WatermarkApp:
                 continue
             child.destroy()
         for attribute in ("preset_combo", "text_box", "logo_label", "undo_button",
-                          "redo_button", "export_button", "canvas", "progress"):
+                          "redo_button", "export_button", "canvas", "progress", "notebook",
+                          "palette_check", "palette_spin"):
             self.__dict__.pop(attribute, None)
         self.vars.clear()
         self.refreshables.clear()

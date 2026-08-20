@@ -13,10 +13,13 @@ from .. import __version__
 from ..core import export, paths, presets
 from ..core.batch import BatchReport, BatchRunner, collect_inputs
 from ..core.config import AppConfig
+from ..core.logs import get_logger
 from ..core.models import ConflictPolicy, JobSettings
 from ..core.tokens import TOKEN_HELP
 from .theme import Palette
 from .widgets import LabeledCombo, tooltip
+
+_LOG = get_logger(__name__)
 
 _IMAGE_FILETYPES = [
     ("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff *.avif"),
@@ -47,6 +50,7 @@ class BatchDialog(tk.Toplevel):
         self.files: List[str] = []
         self.runner: Optional[BatchRunner] = None
         self._events: "queue.Queue[Callable[[], None]]" = queue.Queue()
+        self._pump_job: Optional[str] = None
 
         self.output_var = tk.StringVar(value=settings.output.directory or config.last_output_dir)
         self.pattern_var = tk.StringVar(value=settings.output.filename_pattern)
@@ -57,7 +61,7 @@ class BatchDialog(tk.Toplevel):
         self._build()
         if initial_files:
             self.add_paths(initial_files)
-        self.after(60, self._pump)
+        self._pump_job = self.after(60, self._pump)
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     # -- layout ------------------------------------------------------------ #
@@ -277,8 +281,23 @@ class BatchDialog(tk.Toplevel):
             except queue.Empty:
                 break
             except Exception:  # pragma: no cover - a callback must not kill the pump
+                _LOG.exception("A batch callback failed")
                 break
-        self.after(80, self._pump)
+        self._pump_job = self.after(80, self._pump)
+
+    def destroy(self) -> None:
+        """Cancel the queued poll before tearing the window down.
+
+        Without this the pending ``after`` fires against a destroyed widget and
+        Tk prints ``invalid command name ..._pump`` to stderr.
+        """
+        if self._pump_job is not None:
+            try:
+                self.after_cancel(self._pump_job)
+            except tk.TclError:  # pragma: no cover - already gone
+                pass
+            self._pump_job = None
+        super().destroy()
 
     def _close(self) -> None:
         if self.runner and self.runner.running:
