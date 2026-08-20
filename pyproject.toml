@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "watermark-app"
+version = "2.1.0"
+description = "Watermark, resize and compress images — desktop app, batch runner and CLI."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["watermark", "images", "compression", "batch", "pillow", "tkinter"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+
+# Pillow 10 is the floor: the Resampling/Transpose/Quantize enums and the
+# sized default font this code relies on landed in 9.1-9.2 and are stable there.
+dependencies = ["Pillow>=10.0.0"]
+
+[project.optional-dependencies]
+# Drag-and-drop is a genuine enhancement, never a requirement: the app detects
+# it at runtime and falls back to the file dialogs when it is missing.
+dnd = ["tkinterdnd2>=0.3.2"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[project.scripts]
+watermark = "watermark.cli:main"
+
+[project.gui-scripts]
+watermark-gui = "watermark.ui:main"
+
+[tool.setuptools.packages.find]
+include = ["watermark*"]
+
+[tool.setuptools.package-data]
+watermark = ["assets/fonts/*.ttf", "assets/fonts/*.otf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
