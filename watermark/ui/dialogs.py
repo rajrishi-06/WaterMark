@@ -447,6 +447,8 @@ SHORTCUTS = [
     ("Ctrl+0", "Fit the preview to the window"),
     ("Ctrl+ + / -", "Zoom in and out"),
     ("Ctrl+D", "Switch between dark and light"),
+    ("Ctrl+Shift+C", "Compare without the watermark"),
+    ("Hold \\", "Peek at the un-watermarked image"),
     ("Drag on preview", "Move the watermark"),
     ("Scroll on preview", "Zoom"),
 ]

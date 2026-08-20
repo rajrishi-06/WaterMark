@@ -30,6 +30,8 @@ class PreviewResult:
     """One finished preview frame."""
 
     image: Optional[Image.Image] = None
+    #: The same frame with no watermark, for the compare view.
+    original: Optional[Image.Image] = None
     geometry: Dict[str, Tuple[int, int, int, int]] = field(default_factory=dict)
     full_size: Tuple[int, int] = (0, 0)
     preview_size: Tuple[int, int] = (0, 0)
@@ -162,6 +164,15 @@ class PreviewEngine:
                 preview_max_dimension=max_dimension,
                 overlay=overlay,
             )
+            # The same geometry with every layer switched off: what the photo
+            # looked like before the app touched it.
+            bare = settings.copy()
+            bare.text.enabled = False
+            bare.image.enabled = False
+            bare.tile.enabled = False
+            original = render.render(
+                source, bare, context, preview_max_dimension=max_dimension
+            )
             geometry = render.layer_geometry(source, settings, context, canvas_size=image.size)
             output_size = scaled_size(
                 full_size,
@@ -175,6 +186,7 @@ class PreviewEngine:
                 estimate = min(estimate or 0, settings.export.target_size_kb * 1024) or None
             return PreviewResult(
                 image=image,
+                original=original,
                 geometry=geometry,
                 full_size=full_size,
                 preview_size=image.size,

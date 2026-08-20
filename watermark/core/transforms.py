@@ -2,36 +2,95 @@
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from PIL import Image
 
 from .models import ResizeMode, TransformSettings
 
+#: A crop keeps at least this fraction of each axis, so the user can never drag
+#: the rectangle down to nothing and lose the image.
+MIN_CROP_FRACTION = 0.02
+
+
+def normalize_crop(crop: Optional[Sequence[float]]) -> Optional[List[float]]:
+    """Clamp crop insets and collapse a no-op crop to ``None``.
+
+    Insets are fractions taken off each edge — ``(left, top, right, bottom)``.
+    Storing them as fractions rather than pixels keeps a crop meaningful when
+    the same preset is applied to images of different sizes.
+    """
+    if not crop or len(crop) != 4:
+        return None
+    left, top, right, bottom = (max(0.0, min(1.0, float(value))) for value in crop)
+
+    def fit(near: float, far: float) -> Tuple[float, float]:
+        """Shrink opposing insets so at least MIN_CROP_FRACTION of the axis survives.
+
+        Both are scaled by the same factor rather than each giving up half the
+        excess: subtracting equally cannot work when one side is already at
+        zero, which would leave the axis over budget.  Scaling also keeps the
+        crop centred where the user put it.
+        """
+        limit = 1.0 - MIN_CROP_FRACTION
+        total = near + far
+        if total <= limit:
+            return near, far
+        factor = limit / total
+        return near * factor, far * factor
+
+    left, right = fit(left, right)
+    top, bottom = fit(top, bottom)
+    if max(left, top, right, bottom) < 1e-6:
+        return None
+    return [left, top, right, bottom]
+
+
+def crop_box(
+    crop: Optional[Sequence[float]], size: Tuple[int, int]
+) -> Tuple[int, int, int, int]:
+    """Convert crop insets into a pixel box ``(left, top, right, bottom)``."""
+    width, height = size
+    normalized = normalize_crop(crop)
+    if normalized is None:
+        return 0, 0, width, height
+    left, top, right, bottom = normalized
+    return (
+        int(round(left * width)),
+        int(round(top * height)),
+        int(round(width - right * width)),
+        int(round(height - bottom * height)),
+    )
+
+
+def crop_from_box(
+    box: Sequence[float], size: Tuple[int, int]
+) -> Optional[List[float]]:
+    """Convert a pixel box back into crop insets.  Inverse of :func:`crop_box`."""
+    width, height = size
+    if width <= 0 or height <= 0:
+        return None
+    left, top, right, bottom = box
+    return normalize_crop([
+        left / width,
+        top / height,
+        (width - right) / width,
+        (height - bottom) / height,
+    ])
+
 
 def apply_transform(image: Image.Image, settings: TransformSettings) -> Image.Image:
-    """Crop, flip and rotate ``image`` according to ``settings``.
+    """Flip, rotate and crop ``image`` according to ``settings``.
 
-    Order matters: crop first (so the user's crop refers to the original
-    framing), then flips, then rotation with ``expand`` so nothing is clipped.
+    Order matters, and crop comes **last**: you straighten a horizon and then
+    trim, not the other way round.  It also means the crop rectangle the user
+    drags on the preview is in the same coordinate space as what they see,
+    including the empty corners an off-axis rotation leaves behind.
     """
     if settings.is_identity():
         return image
 
     result = image
-    if settings.crop:
-        left, top, right, bottom = (max(0.0, min(1.0, v)) for v in settings.crop)
-        width, height = result.size
-        box = (
-            int(left * width),
-            int(top * height),
-            int(width - right * width),
-            int(height - bottom * height),
-        )
-        # A degenerate crop would raise; ignore it rather than kill the render.
-        if box[2] - box[0] >= 1 and box[3] - box[1] >= 1:
-            result = result.crop(box)
-
     if settings.flip_horizontal:
         result = result.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
     if settings.flip_vertical:
@@ -50,6 +109,12 @@ def apply_transform(image: Image.Image, settings: TransformSettings) -> Image.Im
             result = result.rotate(
                 angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=fill
             )
+
+    if normalize_crop(settings.crop) is not None:
+        box = crop_box(settings.crop, result.size)
+        # A degenerate crop would raise; ignore it rather than kill the render.
+        if box[2] - box[0] >= 1 and box[3] - box[1] >= 1:
+            result = result.crop(box)
     return result
 
 

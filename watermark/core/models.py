@@ -250,11 +250,12 @@ class TransformSettings:
     crop: Optional[List[float]] = None
 
     def is_identity(self) -> bool:
+        """True when this transform would leave the image untouched."""
         return (
             self.rotation % 360 == 0
             and not self.flip_horizontal
             and not self.flip_vertical
-            and not self.crop
+            and not any(value > 1e-6 for value in (self.crop or ()))
         )
 
 
@@ -297,7 +298,6 @@ class OutputSettings:
     #: Supports the same tokens as watermark text, plus ``{index}``.
     filename_pattern: str = "{name}_wm{ext}"
     conflict: ConflictPolicy = ConflictPolicy.RENAME
-    create_directory: bool = True
 
 
 @dataclass

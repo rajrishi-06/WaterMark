@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **Crop.** `transform.crop` existed in the engine but nothing could reach it —
+  no interface, no flag, no test. It is now a real feature: drag a rectangle on
+  the preview with thirds guides, corner and edge handles, and a live pixel
+  readout, or pass `--crop L,T,R,B` on the command line.
+- **Compare.** Toggle the un-watermarked image in the toolbar, or hold `\` to
+  peek, so you can see exactly what the watermark and compression cost you.
+- `--dpi` on the command line, and `--crop`/`--rotate`/`--flip-*` on the
+  `compress` subcommand.
+- An MIT `LICENSE` file (previously only declared in `pyproject.toml`) and a
+  PyInstaller spec, so the `sys._MEIPASS` font lookup the code already carried
+  is actually exercised by a real build.
+
+### Changed
+
+- **Geometry order is now flip → rotate → crop** (it was crop first). You
+  straighten a horizon and *then* trim, which is both the conventional order and
+  what makes the crop rectangle match the pixels on screen. Nothing depended on
+  the old order, because the crop was unreachable.
+- Dropped `OutputSettings.create_directory` and `AppConfig.confirm_overwrite`.
+  Neither was ever read, but both were serialized into saved presets, implying
+  they did something.
+
+### Fixed
+
+- Crop insets could exceed their own minimum-size guarantee when one side was
+  pinned at zero: subtracting the excess equally cannot work when one side has
+  nothing to give. Both insets are now scaled by the same factor, which also
+  keeps the crop centred where the user put it.
+
 ## 2.0.0
 
 A rewrite around a GUI-free core engine, with batch processing, compression and

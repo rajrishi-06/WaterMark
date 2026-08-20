@@ -24,6 +24,14 @@ once. Everything runs locally; no image ever leaves your computer.
 - **Text tokens** — `{year}`, `{filename}`, `{date}`, `{width}` and friends are
   filled in per image, so one setting covers a whole shoot.
 
+**Framing**
+
+- **Crop** by dragging a rectangle on the preview, with thirds guides and a live
+  pixel readout. Flips and rotation are applied first, so you can straighten a
+  photo and then trim the empty corners off.
+- **Compare** against the un-watermarked image at any time — toggle it in the
+  toolbar, or hold `\` for a quick peek.
+
 **Compression and export**
 
 - Convert between **PNG, JPEG, WebP, AVIF and TIFF** (whichever your Pillow build
@@ -104,6 +112,9 @@ watermark batch ./contracts -o ./sent --preset "Confidential — tiled" --format
 
 # Shrink without watermarking, until each file fits 300 KB
 watermark compress ./exports -o ./small --format webp --target-size 300k
+
+# Trim 10% off the left and right, straighten, then shrink
+watermark compress ./scans -o ./trimmed --crop 10,0,10,0 --rotate 1.5 --max-dimension 2000
 
 # Inspect files
 watermark info photo.jpg --json

@@ -16,7 +16,7 @@ import json
 import os
 import re
 import sys
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 
 from . import APP_NAME, __version__
 from .core import batch as batch_module
@@ -32,6 +32,24 @@ from .core.models import (
 )
 
 _SIZE_RE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*([kmg]?)b?\s*$", re.IGNORECASE)
+
+
+def parse_crop(text: str) -> List[float]:
+    """Parse ``L,T,R,B`` percentages trimmed off each edge into fractions."""
+    parts = [piece.strip() for piece in text.replace(" ", ",").split(",") if piece.strip()]
+    if len(parts) != 4:
+        raise argparse.ArgumentTypeError(
+            f"--crop expects four percentages, LEFT,TOP,RIGHT,BOTTOM (got '{text}')"
+        )
+    try:
+        values = [float(piece.rstrip("%")) / 100.0 for piece in parts]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--crop values must be numbers (got '{text}')") from None
+    if any(value < 0 for value in values):
+        raise argparse.ArgumentTypeError("--crop percentages cannot be negative")
+    if values[0] + values[2] >= 1 or values[1] + values[3] >= 1:
+        raise argparse.ArgumentTypeError("--crop would remove the whole image")
+    return values
 
 
 def parse_size(text: str) -> int:
@@ -93,6 +111,8 @@ def add_transform_options(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--rotate", type=float, metavar="DEG", help="rotate the image")
     group.add_argument("--flip-horizontal", action="store_true")
     group.add_argument("--flip-vertical", action="store_true")
+    group.add_argument("--crop", type=parse_crop, metavar="L,T,R,B",
+                       help="trim these percentages off each edge, e.g. --crop 10,0,10,0")
 
 
 def add_export_options(parser: argparse.ArgumentParser) -> None:
@@ -113,6 +133,8 @@ def add_export_options(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--keep-metadata", action="store_true",
                        help="preserve EXIF/GPS instead of stripping it")
     group.add_argument("--drop-icc", action="store_true", help="discard the colour profile")
+    group.add_argument("--dpi", type=int, metavar="N",
+                       help="stamp this DPI on the output (default: keep the source's)")
 
 
 def build_settings(args: argparse.Namespace) -> JobSettings:
@@ -175,6 +197,8 @@ def build_settings(args: argparse.Namespace) -> JobSettings:
         settings.transform.flip_horizontal = True
     if getattr(args, "flip_vertical", False):
         settings.transform.flip_vertical = True
+    if getattr(args, "crop", None):
+        settings.transform.crop = list(args.crop)
 
     export_settings = settings.export
     if getattr(args, "image_format", None):
@@ -204,6 +228,8 @@ def build_settings(args: argparse.Namespace) -> JobSettings:
         export_settings.strip_metadata = False
     if getattr(args, "drop_icc", False):
         export_settings.keep_icc_profile = False
+    if getattr(args, "dpi", None):
+        export_settings.dpi = args.dpi
     return settings
 
 
@@ -411,6 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     compress_parser.add_argument("--dry-run", action="store_true")
     compress_parser.add_argument("--json", action="store_true")
     compress_parser.add_argument("-q", "--quiet", action="store_true")
+    add_transform_options(compress_parser)
     add_export_options(compress_parser)
     compress_parser.set_defaults(func=command_compress)
 

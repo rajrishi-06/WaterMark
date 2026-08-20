@@ -11,5 +11,5 @@ Importing this module never pulls in Tkinter.
 
 __all__ = ["__version__", "APP_NAME"]
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 APP_NAME = "WaterMark"

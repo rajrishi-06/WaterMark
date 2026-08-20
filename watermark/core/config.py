@@ -34,7 +34,6 @@ class AppConfig:
     preview_resolution: int = 1100
     remember_settings: bool = True
     last_settings: Optional[Dict[str, Any]] = None
-    confirm_overwrite: bool = True
     batch_workers: int = 4
 
     # -- recent files ----------------------------------------------------- #

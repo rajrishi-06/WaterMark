@@ -419,6 +419,119 @@ def test_a_failed_export_reports_instead_of_crashing(app, photo, tmp_path, monke
 
 
 @needs_display
+def test_crop_mode_round_trip(app, photo):
+    """Enter crop, drag a handle, leave — the render must follow."""
+    from watermark.core.transforms import apply_transform, normalize_crop
+
+    app.load(photo)
+    pump(app)
+    assert "No crop" in app.crop_label.cget("text")
+    assert str(app.crop_clear_button.cget("state")) == "disabled"
+
+    app.toggle_crop_mode()
+    pump(app)
+    assert app.canvas.crop_mode is True
+    assert "Finish" in app.crop_button.cget("text")
+    width, height = app.canvas.image_size
+    assert app.canvas.crop_rect == [0.0, 0.0, float(width), float(height)]
+
+    app.canvas._crop_start = list(app.canvas.crop_rect)
+    app.canvas._resize_crop("se", width * 0.75, height * 0.75)
+    pump(app, 0.3)
+    assert normalize_crop(app.settings.transform.crop) is not None
+    assert "Cropped to" in app.crop_label.cget("text")
+    assert str(app.crop_clear_button.cget("state")) == "normal"
+
+    app.toggle_crop_mode()
+    pump(app)
+    assert app.canvas.crop_mode is False
+    cropped = apply_transform(app.source.image, app.settings.transform).size
+    assert cropped[0] < app.source.size[0] and cropped[1] < app.source.size[1]
+
+
+@needs_display
+def test_crop_mode_shows_the_uncropped_frame(app, photo):
+    """The selection needs the whole image underneath it to sit on."""
+    app.load(photo)
+    pump(app)
+    source_ratio = app.source.size[0] / app.source.size[1]
+
+    # An asymmetric crop, so the framing visibly differs from the original.
+    app.settings.transform.crop = [0.3, 0.0, 0.3, 0.0]
+    app._sync_from_settings()
+    pump(app)
+    cropped_ratio = app.canvas.image_size[0] / app.canvas.image_size[1]
+    assert cropped_ratio < source_ratio * 0.75
+
+    app.toggle_crop_mode()
+    pump(app)
+    full_ratio = app.canvas.image_size[0] / app.canvas.image_size[1]
+    assert full_ratio == pytest.approx(source_ratio, abs=0.02)
+    # …and the stored crop is untouched by merely looking at the full frame.
+    assert app.settings.transform.crop == [0.3, 0.0, 0.3, 0.0]
+    app.toggle_crop_mode()
+
+
+@needs_display
+def test_crop_handles_clamp_to_the_frame(app, photo):
+    app.load(photo)
+    pump(app)
+    app.toggle_crop_mode()
+    pump(app)
+    width, height = app.canvas.image_size
+
+    app.canvas._crop_start = list(app.canvas.crop_rect)
+    app.canvas._resize_crop("nw", -900, -900)
+    assert app.canvas.crop_rect[0] >= 0 and app.canvas.crop_rect[1] >= 0
+
+    app.canvas._crop_start = list(app.canvas.crop_rect)
+    app.canvas._resize_crop("w", width * 5, height / 2)
+    assert app.canvas.crop_rect[0] < app.canvas.crop_rect[2]
+    app.toggle_crop_mode()
+
+
+@needs_display
+def test_clearing_the_crop_is_undoable(app, photo):
+    from watermark.core.transforms import normalize_crop
+
+    app.load(photo)
+    pump(app)
+    app.settings.transform.crop = [0.2, 0.2, 0.2, 0.2]
+    app._refresh_crop_controls()
+    app.clear_crop()
+    pump(app, 0.3)
+    assert normalize_crop(app.settings.transform.crop) is None
+    app.undo()
+    assert normalize_crop(app.settings.transform.crop) is not None
+
+
+@needs_display
+def test_compare_shows_the_image_without_its_watermark(app, photo):
+    app.load(photo)
+    pump(app)
+    assert app.canvas._original is not None
+
+    app.toggle_compare()
+    assert app.canvas.comparing is True
+    assert app.compare_var.get() is True
+
+    app.toggle_compare()
+    assert app.canvas.comparing is False
+
+    app._peek_original(True)
+    assert app.canvas.comparing is True
+    app._peek_original(False)
+    assert app.canvas.comparing is False
+
+
+@needs_display
+def test_compare_is_inert_with_no_image(app):
+    app.toggle_compare()
+    assert app.canvas.comparing is False
+    assert app.compare_var.get() is False
+
+
+@needs_display
 def test_batch_dialog_opens_with_the_current_file(app, photo):
     from watermark.ui.dialogs import BatchDialog
 

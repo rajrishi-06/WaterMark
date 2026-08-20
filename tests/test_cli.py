@@ -169,6 +169,75 @@ def test_exact_size_parsing():
     assert (settings.export.exact_width, settings.export.exact_height) == (1080, 1080)
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [("10,20,10,0", [0.1, 0.2, 0.1, 0.0]), ("5 5 5 5", [0.05] * 4),
+     ("10%,0,10%,0", [0.1, 0.0, 0.1, 0.0])],
+)
+def test_parse_crop(text, expected):
+    assert cli.parse_crop(text) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("text", ["10,10", "", "a,b,c,d", "60,0,60,0", "-5,0,0,0"])
+def test_parse_crop_rejects_nonsense(text):
+    with pytest.raises(Exception):
+        cli.parse_crop(text)
+
+
+def test_crop_flag_reaches_the_output(photo, tmp_path):
+    """800x600 trimmed 25% off each side is 400x600."""
+    output = tmp_path / "cropped.png"
+    assert cli.main(["apply", photo, "-o", str(output), "--crop", "25,0,25,0", "--no-text"]) == 0
+    from PIL import Image
+
+    assert Image.open(output).size == (400, 600)
+
+
+def test_dpi_flag_is_written(photo, tmp_path):
+    output = tmp_path / "dpi.jpg"
+    assert cli.main(["apply", photo, "-o", str(output), "--dpi", "144", "--no-text"]) == 0
+    from PIL import Image
+
+    assert Image.open(output).info.get("dpi") == (144, 144)
+
+
+def test_compress_accepts_geometry_flags(photo, tmp_path):
+    """Trimming edges before shrinking is a normal thing to want."""
+    output = tmp_path / "small"
+    assert cli.main(["compress", photo, "-o", str(output), "--crop", "10,10,10,10", "-q"]) == 0
+    from PIL import Image
+
+    assert Image.open(output / "photo.jpg").size == (640, 480)
+
+
+@pytest.mark.parametrize("flag", ["--version", "--help", "-h"])
+def test_module_entry_point_answers_flags_without_a_display(flag, monkeypatch, capsys):
+    """`python -m watermark --version` must not try to open a window."""
+    import watermark.__main__ as entry
+
+    monkeypatch.setattr("sys.argv", ["watermark", flag])
+    monkeypatch.setattr(
+        "watermark.ui.main",
+        lambda *a, **k: pytest.fail("the GUI must not be launched for " + flag),
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        entry.main()
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out.strip()
+
+
+def test_module_entry_point_routes_commands_to_the_cli(photo, tmp_path, monkeypatch):
+    import watermark.__main__ as entry
+
+    output = tmp_path / "out.png"
+    monkeypatch.setattr("sys.argv", ["watermark", "apply", photo, "-o", str(output)])
+    monkeypatch.setattr(
+        "watermark.ui.main", lambda *a, **k: pytest.fail("should not launch the GUI")
+    )
+    assert entry.main() == 0
+    assert output.exists()
+
+
 def test_no_text_disables_the_watermark():
     args = cli.build_parser().parse_args(["batch", "x", "-o", "y", "--no-text"])
     assert cli.build_settings(args).text.enabled is False

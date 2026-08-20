@@ -10,6 +10,7 @@ applied to a whole folder from the Batch dialog.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import queue
 import tkinter as tk
@@ -29,6 +30,7 @@ from ..core.models import (
     TileSource,
 )
 from ..core.tokens import TOKEN_HELP
+from ..core.transforms import apply_transform, crop_box, crop_from_box, normalize_crop
 from . import dialogs, dnd
 from .engine import PreviewEngine, run_async
 from .preview import PreviewCanvas
@@ -74,6 +76,9 @@ class WatermarkApp:
         self.source: Optional[imageio.SourceImage] = None
         self.last_result_size: Tuple[int, int] = (0, 0)
         self.busy = False
+        #: While cropping, the preview renders uncropped so the selection
+        #: rectangle has something to sit on.
+        self.crop_mode = False
 
         self.undo_stack: List[Dict[str, Any]] = []
         self.redo_stack: List[Dict[str, Any]] = []
@@ -189,6 +194,7 @@ class WatermarkApp:
         for widget in self.refreshables:
             widget.refresh()
         self._update_export_state()
+        self._refresh_crop_controls()
         self.schedule_render()
 
     # ------------------------------------------------------------------ #
@@ -248,6 +254,7 @@ class WatermarkApp:
             on_layer_moved=self._on_layer_moved,
             on_open_requested=self.open_image,
             on_zoom_changed=self._on_zoom_changed,
+            on_crop_changed=self._on_crop_changed,
         )
         self.canvas.pack(side="left", fill="both", expand=True)
         dnd.register(self.canvas, self._on_drop)
@@ -339,6 +346,16 @@ class WatermarkApp:
         self.redo_button.pack(side="left", padx=(4, 0))
         ttk.Button(parent, text="Reset", style="Toolbar.TButton",
                    command=self.reset).pack(side="left", padx=(6, 0))
+
+        self.compare_var = tk.BooleanVar(self.root, value=False)
+        self.compare_button = ttk.Checkbutton(
+            parent, text="Compare", variable=self.compare_var,
+            style="Toolbar.TButton", command=self.toggle_compare,
+        )
+        self.compare_button.pack(side="left", padx=(6, 0))
+        tooltip(self.compare_button,
+                "Show the image without its watermark. Hold \\ for a quick peek.",
+                self.palette)
 
         ttk.Separator(parent, orient="vertical").pack(side="left", fill="y", padx=10)
 
@@ -611,12 +628,35 @@ class WatermarkApp:
         self._check(parent, "Flip vertically", "transform.flip_vertical")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=12)
+
+        ttk.Label(parent, text="Crop", style="Heading.TLabel").pack(anchor="w")
+        crop_row = ttk.Frame(parent, style="Panel.TFrame")
+        crop_row.pack(fill="x", pady=(4, 2))
+        self.crop_button = ttk.Button(crop_row, text="Start cropping",
+                                      command=self.toggle_crop_mode)
+        self.crop_button.pack(side="left")
+        self.crop_clear_button = ttk.Button(crop_row, text="Clear",
+                                            command=self.clear_crop, width=7)
+        self.crop_clear_button.pack(side="left", padx=(6, 0))
+        self.crop_label = ttk.Label(parent, text="", style="PanelMuted.TLabel",
+                                    wraplength=300, justify="left")
+        self.crop_label.pack(anchor="w", pady=(2, 0))
         ttk.Label(
             parent,
-            text="Rotation is applied before the watermark, so the watermark always "
-                 "stays the right way up.",
-            style="PanelMuted.TLabel", wraplength=280, justify="left",
+            text="Drag the edges or corners of the rectangle, then finish "
+                 "cropping to apply it.",
+            style="PanelMuted.TLabel", wraplength=300, justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=12)
+        ttk.Label(
+            parent,
+            text="Flips and rotation happen first, then the crop — so you can "
+                 "straighten a photo and trim the empty corners off. The "
+                 "watermark is drawn last and always stays the right way up.",
+            style="PanelMuted.TLabel", wraplength=300, justify="left",
         ).pack(anchor="w")
+        self._refresh_crop_controls()
 
     def _build_export_tab(self, parent: ttk.Frame) -> None:
         available = {
@@ -721,6 +761,83 @@ class WatermarkApp:
         self._sync_from_settings()
         self.push_undo()
 
+    def toggle_crop_mode(self) -> None:
+        """Enter or leave crop mode.
+
+        Leaving is what commits the crop, so a half-dragged rectangle never
+        lands in the undo history.
+        """
+        if self.source is None:
+            messagebox.showinfo("Nothing to crop", "Open an image first.", parent=self.root)
+            return
+
+        self.crop_mode = not self.crop_mode
+        if self.crop_mode:
+            self._crop_before = self.settings.to_json_dict()
+            rect = self._crop_rect_for_preview()
+            self.schedule_render(delay=10)
+            self.root.after(180, lambda: self.canvas.set_crop_mode(True, rect))
+        else:
+            self.canvas.set_crop_mode(False)
+            if getattr(self, "_crop_before", None) != self.settings.to_json_dict():
+                self.undo_stack.append(self._crop_before)
+                del self.undo_stack[:-_MAX_UNDO]
+                self.redo_stack.clear()
+                self._update_history_buttons()
+            self.schedule_render(delay=10)
+        self._refresh_crop_controls()
+
+    def _crop_rect_for_preview(self) -> Optional[Tuple[float, float, float, float]]:
+        """The stored crop, expressed in the coming preview frame's pixels."""
+        crop = normalize_crop(self.settings.transform.crop)
+        if crop is None or self.canvas.image_size is None:
+            return None
+        return crop_box(crop, self.canvas.image_size)
+
+    def _on_crop_changed(self, rect: Tuple[float, float, float, float]) -> None:
+        """The canvas reports a dragged rectangle; store it as insets."""
+        size = self.canvas.image_size
+        if size is None:
+            return
+        self.settings.transform.crop = crop_from_box(rect, size)
+        self._refresh_crop_controls()
+
+    def clear_crop(self) -> None:
+        if not normalize_crop(self.settings.transform.crop):
+            return
+        self.push_undo()
+        self.settings.transform.crop = None
+        if self.crop_mode:
+            self.canvas.reset_crop_rect()
+        self._refresh_crop_controls()
+        self.schedule_render(delay=10)
+
+    def _refresh_crop_controls(self) -> None:
+        """Keep the crop button, label and Clear state in step."""
+        if not hasattr(self, "crop_button"):
+            return
+        self.crop_button.configure(
+            text="Finish cropping" if self.crop_mode else "Start cropping"
+        )
+        crop = normalize_crop(self.settings.transform.crop)
+        self.crop_clear_button.configure(state="normal" if crop else "disabled")
+
+        if crop is None:
+            self.crop_label.configure(text="No crop — the whole image is used.")
+            return
+        if self.source is not None:
+            framed = apply_transform(
+                self.source.image,
+                dataclasses.replace(self.settings.transform, crop=None),
+            ).size
+            box = crop_box(crop, framed)
+            self.crop_label.configure(
+                text=f"Cropped to {box[2] - box[0]} × {box[3] - box[1]} px "
+                     f"({(box[2] - box[0]) / framed[0] * 100:.0f}% of the width)"
+            )
+        else:
+            self.crop_label.configure(text="Crop set.")
+
     def _on_text_changed(self, _event: tk.Event) -> None:
         if self._syncing:
             return
@@ -819,7 +936,12 @@ class WatermarkApp:
         self._render_job = None
         if self.source is None:
             return
-        self.engine.request(self.source, self.settings, self.config.preview_resolution)
+        settings = self.settings
+        if self.crop_mode:
+            # Show the full frame; the selection rectangle is the crop.
+            settings = settings.copy()
+            settings.transform.crop = None
+        self.engine.request(self.source, settings, self.config.preview_resolution)
 
     def _pump(self) -> None:
         """Tk-thread loop: deliver preview frames and worker callbacks."""
@@ -829,6 +951,7 @@ class WatermarkApp:
                 self.status_var.set(f"Preview failed: {result.error}")
             else:
                 self.canvas.set_image(result.image, result.geometry)
+                self.canvas.set_original(result.original)
                 self.last_result_size = result.output_size
                 self._update_status(result)
                 if result.warning:
@@ -881,6 +1004,18 @@ class WatermarkApp:
         placement.offset_x_percent = updated.offset_x_percent
         placement.offset_y_percent = updated.offset_y_percent
         self.schedule_render(delay=16)
+
+    def toggle_compare(self, _event: Optional[tk.Event] = None) -> None:
+        """Flip between the processed result and the untouched original."""
+        wanted = not self.canvas.comparing
+        actual = self.canvas.set_comparing(wanted)
+        self.compare_var.set(actual)
+        if wanted and not actual:
+            self.status_var.set("Open an image first to compare.")
+
+    def _peek_original(self, comparing: bool) -> None:
+        """Hold-to-compare: press and hold rather than toggling twice."""
+        self.compare_var.set(self.canvas.set_comparing(comparing))
 
     def _on_zoom_changed(self, scale: float) -> None:
         if self.source is not None:
@@ -1144,10 +1279,12 @@ class WatermarkApp:
             child.destroy()
         for attribute in ("preset_combo", "text_box", "logo_label", "undo_button",
                           "redo_button", "export_button", "canvas", "progress", "notebook",
-                          "palette_check", "palette_spin"):
+                          "palette_check", "palette_spin", "crop_button",
+                          "crop_clear_button", "crop_label", "compare_button"):
             self.__dict__.pop(attribute, None)
         self.vars.clear()
         self.refreshables.clear()
+        self.crop_mode = False
         self.palette = apply_theme(self.root, self.config.theme)
         self._build()
         self._sync_from_settings()
@@ -1187,9 +1324,13 @@ class WatermarkApp:
             "<Control-plus>": lambda e: self._zoom(1.2),
             "<Control-equal>": lambda e: self._zoom(1.2),
             "<Control-minus>": lambda e: self._zoom(1 / 1.2),
+            "<Control-Shift-C>": lambda e: self.toggle_compare(),
         }
         for sequence, handler in bindings.items():
             self.root.bind_all(sequence, handler)
+        # Hold-to-peek, the way image editors do it.
+        self.root.bind_all("<KeyPress-backslash>", lambda e: self._peek_original(True))
+        self.root.bind_all("<KeyRelease-backslash>", lambda e: self._peek_original(False))
         dnd.register(self.root, self._on_drop)
 
     def quit(self, _event: Optional[tk.Event] = None) -> None:
